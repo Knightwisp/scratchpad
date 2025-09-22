@@ -1,7 +1,17 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git config:*)",
+      "Bash(git push:*)",
+      "Bash(mkdir:*)",
+      "Bash(cp:*)",
+      "Bash(robocopy:*)",
+      "Bash(echo:*)",
+      "Bash(notepad.exe C:reVsCode.txt)",
+      "Bash(dir C:reVsCode.txt)",
+      "Bash(notepad.exe:*)"
     ],
     "deny": [],
     "ask": []

@@ -3,28 +3,30 @@ using Microsoft.Data.SqlClient;
 using Amazon.SimpleNotificationService;
 using Amazon.SimpleNotificationService.Model;
 using System.Text.Json;
-using System.Transactions; // For TransactionScope
+using System.Transactions;
 
-namespace PoorBankApp.Controllers
+// TODO - remove tab spaces; format if possible (MS standards)
+
+namespace PuzzlerBankApp.Controllers
 {
     [ApiController]
     [Route("[controller]")]
     public class BankAccountController : ControllerBase
     {
-        // ISSUE 1: Hard-coded dependencies and no Dependency Injection (DI)
-        // - Tightly coupled, impossible to mock for unit tests, difficult to change implementations.
-        // BEST PRACTICE: Use Constructor Injection. This makes the class testable and configurable.
+        // ISSUE #1: Hard-coded dependencies / NO DI
+        // Headaches: Coupling (how?), hard to auto-test (how?), inflexible configuration (more code to change)
         private readonly string _connectionString = "Server=localhost;Database=BankDB;User Id=sa;Password=YourStrong!Password;TrustServerCertificate=true;";
         private readonly IAmazonSimpleNotificationService _snsClient = new AmazonSimpleNotificationServiceClient();
 
+        // FIX: Use DI in the constructor
+        // Blessings: Flexible configuration, testability (mocking), loose coupling/dependency
         /*
-        CORRECTED APPROACH FOR ISSUE 1:
         private readonly string _connectionString;
         private readonly IAmazonSimpleNotificationService _snsClient;
 
         public BankAccountController(IConfiguration configuration, IAmazonSimpleNotificationService snsClient)
         {
-            _connectionString = configuration.GetConnectionString("BankDB");
+            _connectionString = configuration.GetConnectionString("PuzzlerPiggyBank");
             _snsClient = snsClient;
         }
         */
@@ -32,7 +34,7 @@ namespace PoorBankApp.Controllers
         [HttpPost("withdraw")]
         public string Withdraw(long accountId, decimal amount)
         {
-            // ISSUE 8: No input validation or model binding.
+            // ISSUE #8: Lack of input validation.
             // - Negative amounts or invalid account IDs will cause runtime errors or logical bugs.
             // BEST PRACTICE: Use Data Annotations for automatic model validation or FluentValidation.
             // The [ApiController] attribute automatically returns a 400 Bad Request if validation fails.
