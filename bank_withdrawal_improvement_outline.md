@@ -17,6 +17,24 @@
 
 ---
 
+## Dependency Comparison: Java and .NET
+
+| Java Assembly | .NET Equivalent | Function |
+|--------------|-----------------|-----------|
+| `org.springframework.web.bind.annotation.*` | `Microsoft.AspNetCore.Mvc` | Web API controller annotations and request handling |
+| `org.springframework.beans.factory.annotation.Autowired` | Constructor Dependency Injection | Dependency injection mechanism |
+| `org.springframework.jdbc.core.JdbcTemplate` | `Microsoft.Data.SqlClient` | Database access and SQL operations |
+| `software.amazon.awssdk.services.sns` | `Amazon.SimpleNotificationService` | AWS SNS integration for event publishing |
+| `java.math.BigDecimal` | `decimal` | High-precision decimal number handling |
+| Manual JSON string formatting | `System.Text.Json` | JSON serialization/deserialization |
+| Spring's `@RestController` | `[ApiController]` attribute | RESTful API controller designation |
+| Spring's `@RequestMapping` | `[Route]` attribute | URL route mapping |
+| Spring's `@PostMapping` | `[HttpPost]` attribute | HTTP POST endpoint definition |
+| Spring's `@RequestParam` | Model binding | Request parameter binding |
+| N/A | `System.Transactions` | Transaction management (not explicitly shown in Java version) |
+
+---
+
 ## Code Examples
 
 <details>
