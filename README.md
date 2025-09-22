@@ -22,7 +22,6 @@ Improve on the provided code snippet, which outlines a basic banking operation i
 Assessment feedback must maintain focus on enhancement aspects (design). Artefacts should be concise while emphasizing and enabling feedback and expression of thoughtful design experience. Responses to the exercise are given in C# ("comfortable" language) with code snippet files and markdown document(s) to walk through the outline of issues and elaborate on implementation options. 
 
 ## Artefacts
-- bankWithdrawelApi_original.java - code snippet from assessment to improve
 - bankWithdrawelApi_commented.java - code snippet w/ comments annotating issue points
 - bankWithdrawelApi.cs - code snippet w/ comments annotating issue points translated to .Net
 - [bank_withdrawal_improvement_outline.md](bank_withdrawal_improvement_outline.md) - table containing outline of approach to addressing the code snippet, and a presentable walkthrough of suggestions along enhancement aspects emphasized in the exercise. Examples here are written in C# (.Net).
