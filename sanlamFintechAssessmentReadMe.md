@@ -9,20 +9,4 @@
 
 # Response Structure
 - Enhanced code snippet in [`bankWithdrawelApi.cs`](./bankWithdrawelApi.cs) with comments explaining design and code changes.
-
-## Running the Demo (Optional)
-
-A "functional" demo is available for test driving. Pray to the demo deities. 
-
-### Prerequisites
-- Docker Desktop installed and running
-
-### Quick Start
-```cmd
-run-demo.bat
-```
-
-### Testing
-- API available at: http://localhost:5000
-
-See [run_demo.md](run_demo.md) for detailed instructions and test calls. 
+- An optional way to exercise `bankWithdrawelApi.cs` detailed in [`run_demo.md`](./run_demo.md).
