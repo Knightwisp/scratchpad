@@ -105,3 +105,7 @@ build/
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# Visual Studio Code
+.vscode/
+*.code-workspace

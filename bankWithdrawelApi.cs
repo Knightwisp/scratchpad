@@ -1,250 +1,225 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
-using Amazon.SimpleNotificationService;
-using Amazon.SimpleNotificationService.Model;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using System.ComponentModel.DataAnnotations;
+using System.Data;
 using System.Text.Json;
 using System.Transactions;
 
-// ISSUE #9: Manual JSON Handling
-// Headaches:
-// - Malformed JSON from special characters
-// - No compile-time type safety
-// - Vulnerable to injection attacks
-// - Error-prone manual string formatting
-//
-// BEST PRACTICE #9: Use Strongly-Typed Models
-// Blessings:
-// - Compile-time type safety
-// - Automatic serialization handling
-// - Protected against injection
-// - Reliable data transformation
+namespace PuzzlerBankApp.Controllers;
 
-// ISSUE #10: No Idempotency Control
-// Headaches:
-// - Double-spending from network retries
-// - Client timeout scenarios cause duplicates
-// - Financial discrepancies and reconciliation issues
-// - Regulatory compliance violations
-//
-// BEST PRACTICE #10: Implement Idempotency Pattern
-// Blessings:
-// - Safe retry handling
-// - Prevents duplicate transactions
-// - Simplified client implementation
-// - Regulatory compliance assured
-
-// TODO - remove tab spaces; format if possible (MS standards)
-
-namespace PuzzlerBankApp.Controllers
+[ApiController]
+[Route("[controller]")]
+public sealed class BankAccountController : ControllerBase
 {
-    [ApiController]
-    [Route("[controller]")]
-    public class BankAccountController : ControllerBase
+    // Fix: Removed hardcoded dependencies in favor of Dependency Injection 
+    // Properties can be passed in by startup configuration;
+    // Configuration can be changed without code changes;
+    // Simpler to mock dependencies for testing
+    private readonly string _connectionString;
+    private readonly ILogger<BankAccountController> _logger;
+    private readonly string _topicArn;
+
+    public BankAccountController(
+        IConfiguration configuration,
+        ILogger<BankAccountController> logger)
     {
-        // ISSUE #1: Hard-coded Dependencies and Missing Dependency Injection
-        // Headaches: 
-        // - Untestable code (cannot mock dependencies)
-        // - Environment-specific configs hardcoded
-        // - Violates SOLID principles
-        // - Difficult to change implementations
-        // - Security risk from exposed credentials in code
-        private readonly string _connectionString = "Server=localhost;Database=BankDB;User Id=sa;Password=YourStrong!Password;TrustServerCertificate=true;";
-        private readonly IAmazonSimpleNotificationService _snsClient = new AmazonSimpleNotificationServiceClient();
+        // Fix: Configuration from appsettings instead of hardcoded values
+        _connectionString = configuration.GetConnectionString("PuzzlerPiggyBank") 
+            ?? throw new ArgumentException("Missing connection string", nameof(configuration));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _topicArn = configuration["AWS:SNS:WithdrawalEventsTopic"] 
+            ?? "puzzler-topic-arn";
+    }
 
-        // BEST PRACTICE #1: Implement Constructor Dependency Injection
-        // Blessings:
-        // - Configuration flexibility through appsettings.json
-        // - Easy unit testing with mocked dependencies
-        // - Loose coupling for better maintainability
-        // - Secure credential management via configuration
-        /*
-        private readonly string _connectionString;
-        private readonly IAmazonSimpleNotificationService _snsClient;
+    [HttpPost("withdraw")]
+    public async Task<IActionResult> WithdrawAsync([FromBody] WithdrawalRequest request)
+    {
+        // Fix: Added input validation
+        ArgumentNullException.ThrowIfNull(request);
 
-        public BankAccountController(IConfiguration configuration, IAmazonSimpleNotificationService snsClient)
+        var validationResults = new List<ValidationResult>();
+        if (!Validator.TryValidateObject(request, new ValidationContext(request), validationResults, true))
         {
-            _connectionString = configuration.GetConnectionString("PuzzlerPiggyBank");
-            _snsClient = snsClient;
+            _logger.LogWarning("Invalid withdrawal request: {Errors}", validationResults);
+            return BadRequest(validationResults);
         }
-        */
 
-        [HttpPost("withdraw")]
-        public string Withdraw(long accountId, decimal amount)
+        // Fix: Added transaction scope for consistency
+        // The database update and event publication should be atomic 
+        using var scope = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled);
+        try
         {
-            // ISSUE #7: Business Logic in Controller
-            // Headaches:
-            // - Violates single responsibility principle
-            // - Business logic cannot be reused
-            // - Testing requires HTTP context setup
-            // - Tight coupling reduces maintainability
-            //
-            // BEST PRACTICE #7: Implement Service Layer Architecture
-            // Blessings:
-            // - Clear separation of concerns
-            // - Reusable business logic
-            // - Simplified testing without HTTP context
-            // - Improved maintainability
-
-            // ISSUE #8: Missing Input Validation
-            // Headaches:
-            // - Negative withdrawal amounts cause logic errors
-            // - Invalid account IDs trigger database exceptions
-            // - No protection against malicious input
-            // - Runtime crashes from unexpected data
-            //
-            // BEST PRACTICE #8: Implement Model Validation
-            // Blessings:
-            // - Automatic request validation
-            // - Clear error messages for clients
-            // - Protection against invalid data
-            // - Reduced error handling complexity
-
-            // ISSUE #3: Race-Prone Two-Step Database Operation
-            // Headaches:
-            // - Account overdrafts from concurrent withdrawals
-            // - Data inconsistency under load
-            // - Financial losses and compliance issues
-            // - Customer trust erosion
-            // - Multiple database roundtrips impact performance
-            //
-            // BEST PRACTICE #3: Implement Single Atomic UPDATE
-            // Blessings:
-            // - Race conditions eliminated through atomic operation
-            // - Guaranteed consistent account balance
-            // - Improved performance with single DB operation
-            // - Simplified error handling and recovery
-            decimal currentBalance;
-            var getBalanceSql = "SELECT balance FROM accounts WHERE id = @accountId";
-
-            using (var connection = new SqlConnection(_connectionString))
+            // Fix: Replaced two-step operation with stored procedure
+            var resultCode = await ProcessWithdrawalAsync(request);
+            if (resultCode != 0)
             {
-                connection.Open();
-                using (var command = new SqlCommand(getBalanceSql, connection))
-                {
-                    command.Parameters.AddWithValue("@accountId", accountId);
-                    // Potential NullReferenceException if account doesn't exist
-                    currentBalance = (decimal)command.ExecuteScalar();
-                }
+                return HandleWithdrawalError(resultCode, request.AccountId);
             }
 
-            // ISSUE #2: Missing Transaction Scope
-            // Headaches:
-            // - Lost events if SNS publish fails
-            // - Partial state changes (money deducted, no notification)
-            // - Inconsistent system state across services
-            // - Difficult error recovery and reconciliation
-            //
-            // BEST PRACTICE #2: Implement TransactionScope
-            // Blessings:
-            // - Guaranteed atomic operations across all resources
-            // - Automatic rollback on any operation failure
-            // - System remains consistent in failure scenarios
-            // - Simplified error recovery and debugging
-            if (currentBalance >= amount)
+            // Fix: Added outbox pattern for reliable event publishing
+            // Async methods since the operations can happen in parallel but must fail/succeed together
+            await PersistWithdrawalEventAsync(request);
+
+            scope.Complete();
+            // Fix: Added structured logging with context
+            _logger.LogInformation(
+                "Withdrawal successful: Amount {Amount} from account {AccountId}",
+                request.Amount,
+                request.AccountId);
+
+            return Ok(new { message = "Withdrawal successful" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error processing withdrawal for account {AccountId}", request.AccountId);
+            // Fix: Better error handling (http status codes with messages)
+            return StatusCode(500, new { message = "An error occurred processing the withdrawal" });
+        }
+    }
+
+    // Fix: Extracted method for better readability and maintenance
+    // This should be in a "service class"
+    private async Task<int> ProcessWithdrawalAsync(WithdrawalRequest request)
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync();
+
+        // use a stored procedure to encapsulate the data logic, 
+        // take advantage of cached plans 
+        // and send less I/O over the network
+        await using var command = new SqlCommand("ProcessWithdrawal", connection)
+        {
+            CommandType = CommandType.StoredProcedure
+        };
+
+        command.Parameters.AddWithValue("@AccountId", request.AccountId);
+        command.Parameters.AddWithValue("@Amount", request.Amount);
+        command.Parameters.AddWithValue("@IdempotencyKey", Guid.Parse(request.IdempotencyKey));
+
+        var resultCodeParameter = command.Parameters.Add("@ResultCode", SqlDbType.Int);
+        resultCodeParameter.Direction = ParameterDirection.Output;
+        
+        var errorMessageParameter = command.Parameters.Add("@ErrorMessage", SqlDbType.NVarChar, 255);
+        errorMessageParameter.Direction = ParameterDirection.Output;
+
+        try
+        {
+            await command.ExecuteNonQueryAsync();
+            var resultCode = (int)resultCodeParameter.Value;
+            
+            if (resultCode != 0)
             {
-                var updateSql = "UPDATE accounts SET balance = balance - @amount WHERE id = @accountId";
-                int rowsAffected;
+                var errorMessage = errorMessageParameter.Value?.ToString() ?? "Unknown error";
+                _logger.LogWarning("Stored procedure returned error code {Code}: {Message}", resultCode, errorMessage);
+            }
+            
+            return resultCode;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error executing ProcessWithdrawal stored procedure");
+            return -1; // Database error
+        }
+    }
 
-                using (var connection = new SqlConnection(_connectionString))
-                {
-                    connection.Open();
-                    using (var command = new SqlCommand(updateSql, connection))
-                    {
-                        command.Parameters.AddWithValue("@amount", amount);
-                        command.Parameters.AddWithValue("@accountId", accountId);
-                        rowsAffected = command.ExecuteNonQuery();
-                    }
-                }
+    // Fix: Implemented "outbox" pattern for async event delivery
+    private async Task PersistWithdrawalEventAsync(WithdrawalRequest request)
+    {
+        var withdrawalEvent = new WithdrawalEvent
+        {
+            AccountId = request.AccountId,
+            Amount = request.Amount,
+            TransactionId = request.IdempotencyKey,
+            Status = "SUCCESSFUL"
+        };
 
-                if (rowsAffected > 0)
-                {
-                    // ISSUE #4: Non-Atomic Event Publishing
-                    // Headaches:
-                    // - Event publishing failures lead to inconsistent system state
-                    // - No retry mechanism for failed notifications
-                    // - Missing audit trail for notification attempts
-                    // - Difficult to track notification status
-                    //
-                    // BEST PRACTICE #4: Implement Outbox Pattern
-                    // Blessings:
-                    // - Guaranteed event delivery through persistence
-                    // - Automatic retry mechanism for failed notifications
-                    // - Complete audit trail of all notifications
-                    // - System remains consistent during failures
-                    var withdrawalEvent = new WithdrawalEvent
-                    {
-                        Amount = amount,
-                        AccountId = accountId,
-                        Status = "SUCCESSFUL"
-                    };
+        // This could publish to SNS et al.
+        // The "outbox" pattern: notification processed by a background service that reads from a database table
+        // which decouples operation and publishing
+        _logger.LogInformation("Event would be published to SNS topic {TopicArn}: {@Event}", 
+            _topicArn, withdrawalEvent);
 
-                    // Hard-coded ARN is also a configuration issue
-                    var topicArn = "arn:aws:sns:us-west-2:123456789012:WithdrawalEvents";
-                    var publishRequest = new PublishRequest
-                    {
-                        TopicArn = topicArn,
-                        Message = JsonSerializer.Serialize(withdrawalEvent)
-                    };
+        // could drop a queue or stream in here instead
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync();
+        
+        await using var command = new SqlCommand("InsertEventOutbox", connection)
+        {
+            CommandType = CommandType.StoredProcedure
+        };
 
-                    // ISSUE #5: Fire-and-Forget Event Publishing
-                    // Headaches:
-                    // - Silent event loss during AWS outages
-                    // - Downstream systems miss critical notifications
-                    // - No visibility into messaging failures
-                    // - Cascading system inconsistencies
-                    //
-                    // BEST PRACTICE #5: Implement Resilient Event Publishing
-                    // Blessings:
-                    // - Reliable message delivery with retries
-                    // - Circuit breaker prevents cascading failures
-                    // - Visibility into messaging health
-                    // - Graceful handling of AWS outages
-                    _snsClient.PublishAsync(publishRequest); // Fire and forget? Exception risk.
+        command.Parameters.AddWithValue("@EventType", "WITHDRAWAL");
+        command.Parameters.AddWithValue("@Payload", JsonSerializer.Serialize(withdrawalEvent));
+        command.Parameters.AddWithValue("@Status", "PENDING");
 
-                    // ISSUE #6: Missing Observability
-                    // Headaches:
-                    // - Impossible to debug production issues
-                    // - No performance monitoring or SLA tracking
-                    // - Cannot trace requests across services
-                    // - Blind to system health and bottlenecks
-                    //
-                    // BEST PRACTICE #6: Implement Structured Logging & Telemetry
-                    // Blessings:
-                    // - Comprehensive request tracing
-                    // - Performance metrics and SLA monitoring
-                    // - Quick problem identification
-                    // - Data-driven optimization
-                    return "Withdrawal successful";
-                }
-                else
-                {
-                    return "Withdrawal failed";
-                }
+        var eventIdParameter = command.Parameters.Add("@EventId", SqlDbType.BigInt);
+        eventIdParameter.Direction = ParameterDirection.Output;
+        
+        var resultCodeParameter = command.Parameters.Add("@ResultCode", SqlDbType.Int);
+        resultCodeParameter.Direction = ParameterDirection.Output;
+        
+        var errorMessageParameter = command.Parameters.Add("@ErrorMessage", SqlDbType.NVarChar, 255);
+        errorMessageParameter.Direction = ParameterDirection.Output;
+
+        try
+        {
+            await command.ExecuteNonQueryAsync();
+            var resultCode = (int)resultCodeParameter.Value;
+            var eventId = (long)eventIdParameter.Value;
+            
+            if (resultCode == 0)
+            {
+                _logger.LogInformation("Event persisted to outbox with ID {EventId}", eventId);
             }
             else
             {
-                return "Insufficient funds for withdrawal";
+                var errorMessage = errorMessageParameter.Value?.ToString() ?? "Unknown error";
+                _logger.LogWarning("Failed to persist event: {Message}", errorMessage);
             }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error persisting withdrawal event to outbox");
+            throw; // Re-throw to trigger transaction rollback
         }
     }
 
-    public class WithdrawalEvent
+    // Fix: Error handling with specific error messages
+    private IActionResult HandleWithdrawalError(int resultCode, long accountId)
     {
-        public decimal Amount { get; set; }
-        public long AccountId { get; set; }
-        public string Status { get; set; }
+        var errorMessage = resultCode switch
+        {
+            1 => "Insufficient funds for withdrawal",
+            2 => "Account not found",
+            3 => "Duplicate transaction",
+            _ => "Unknown error occurred"
+        };
+
+        _logger.LogWarning("Withdrawal failed: {Error} for account {AccountId}", errorMessage, accountId);
+        return BadRequest(new { message = errorMessage });
     }
 }
 
-/*
-SUMMARY OF KEY BEST PRACTICE CORRECTIONS:
+// Fix: Using records type for typed, validated objects to pass data
+public sealed record WithdrawalRequest
+{
+    [Range(1, long.MaxValue, ErrorMessage = "Account ID must be positive")]
+    public required long AccountId { get; init; }
+    
+    [Range(typeof(decimal), "0.01", "1000000.00", ErrorMessage = "Amount must be between 0.01 and 1,000,000")]
+    public required decimal Amount { get; init; }
+    
+    [Required(ErrorMessage = "Idempotency key is required")]
+    [StringLength(36, MinimumLength = 36, ErrorMessage = "Idempotency key must be a valid GUID")]
+    public required string IdempotencyKey { get; init; }
+}
 
-1.  **Dependency Injection:** Inject `IConfiguration` and `IAmazonSimpleNotificationService` via the constructor.
-2.  **Service Layer:** Move business logic out of the controller and into a dedicated service class (e.g., `IAccountService.WithdrawAsync`).
-3.  **Atomic Update:** Replace the SELECT/UPDATE with a single UPDATE statement: `UPDATE accounts SET balance = balance - @amount WHERE id = @accountId AND balance >= @amount`.
-4.  **Transactions:** Wrap the entire unit of work (database operation + event persistence for the Outbox pattern) in a `TransactionScope`.
-5.  **Outbox Pattern:** Instead of publishing directly to SNS, insert the event into an `Outbox` table in the same database transaction. A separate worker process then publishes them.
-6.  **Async/Await:** Make the controller method `async Task<IActionResult>` and `await` all asynchronous calls.
-7.  **Logging:** Inject `ILogger<BankAccountController>` and add informative log messages for successes, failures, and exceptions.
-8.  **Validation:** Create a request model with Data Annotations or use FluentValidation to validate input before it reaches business logic.
-*/
+public sealed record WithdrawalEvent
+{
+    public required long AccountId { get; init; }
+    public required decimal Amount { get; init; }
+    public required string TransactionId { get; init; }
+    public required string Status { get; init; }
+}
