@@ -105,3 +105,12 @@ build/
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# Visual Studio Code
+.vscode/
+*.code-workspace
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
